@@ -1,74 +1,15 @@
+import argparse
 import os
-import json
+import sys
 from io import BytesIO
 
 import streamlit as st
 from PIL import Image
 from dotenv import load_dotenv
 from google import genai
-from google.genai import types
+from openai import OpenAI
 
-
-load_dotenv()
-
-API_KEY = os.getenv("GEMINI_API_KEY")
-if not API_KEY:
-  st.error("GEMINI_API_KEY が設定されていません. .env を確認してください. ")
-  st.stop()
-
-client = genai.Client(api_key=API_KEY)
-
-
-PROMPT = """
-あなたは食事管理アプリの画像解析エンジンです. 
-入力された食事写真を解析し, 以下のJSON形式だけで返してください. 
-
-推定値には不確実性があるため, confidenceも付けてください. 
-カロリーやPFCは概算で構いません. 
-
-{
-  "meal_name": "料理名",
-  "items": [
-    {
-      "name": "食品名",
-      "estimated_amount": "推定量",
-      "calories_kcal": 0,
-      "protein_g": 0,
-      "fat_g": 0,
-      "carbs_g": 0,
-      "confidence": 0.0
-    }
-  ],
-  "total": {
-    "calories_kcal": 0,
-    "protein_g": 0,
-    "fat_g": 0,
-    "carbs_g": 0
-  },
-  "notes": "補足"
-}
-"""
-
-
-def analyze_meal(image: Image.Image) -> dict:
-  response = client.models.generate_content(
-    model="gemini-2.5-flash",
-    contents=[
-      PROMPT,
-      image,
-    ],
-    config=types.GenerateContentConfig(
-      response_mime_type="application/json"
-    ),
-  )
-
-  try:
-    return json.loads(response.text)
-  except json.JSONDecodeError:
-    return {
-      "error": "JSONとして解析できませんでした",
-      "raw_response": response.text,
-    }
+from urls.meal_analyzer import analyze_meal
 
 
 st.set_page_config(
@@ -77,8 +18,35 @@ st.set_page_config(
   layout="wide",
 )
 
+parser = argparse.ArgumentParser()
+parser.add_argument(
+  "--provider",
+  choices=["gemini", "openai"],
+  default="gemini",
+  help="使用するAI APIプロバイダー",
+)
+args, _ = parser.parse_known_args(sys.argv[1:])
+provider = args.provider
+
+load_dotenv()
+
+if provider == "gemini":
+  api_key = os.getenv("GEMINI_API_KEY")
+  if not api_key:
+    st.error("GEMINI_API_KEY が設定されていません. .env を確認してください. ")
+    st.stop()
+  client = genai.Client(api_key=api_key)
+else:
+  api_key = os.getenv("OPENAI_API_KEY")
+  if not api_key:
+    st.error("OPENAI_API_KEY が設定されていません. .env を確認してください. ")
+    st.stop()
+  client = OpenAI(api_key=api_key)
+
+
 st.title("🍽️ 食事ログAI")
-st.caption("食事写真をアップロードすると, Geminiが料理・カロリー・PFCを推定します. ")
+provider_name = "Gemini" if provider == "gemini" else "OpenAI"
+st.caption(f"食事写真をアップロードすると, {provider_name}が料理・カロリー・PFCを推定します. ")
 
 uploaded_file = st.file_uploader(
   "食事写真をアップロードしてください",
@@ -97,15 +65,15 @@ if uploaded_file:
   with col2:
     st.subheader("解析")
 
-    if st.button("Geminiで解析する", type="primary"):
+    if st.button(f"{provider_name}で解析する", type="primary"):
       with st.spinner("解析中..."):
-        result = analyze_meal(image)
+        result = analyze_meal(image, provider, client)
         st.session_state["analysis_result"] = result
 
     if "analysis_result" in st.session_state:
       result = st.session_state["analysis_result"]
 
-      st.subheader("Gemini推定結果")
+      st.subheader(f"{provider_name}推定結果")
       st.json(result)
 
       if "total" in result:

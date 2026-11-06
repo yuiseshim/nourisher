@@ -2,4 +2,4 @@
 set -euo pipefail
 
 cd "$(dirname "$0")"
-streamlit run app.py --server.port 8050
+streamlit run app.py --server.port 8050 -- "$@"
